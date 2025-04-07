@@ -1,0 +1,92 @@
+name: Deploy AKS with ACR and Ingress
+
+on:
+  workflow_dispatch:
+    inputs:
+      resourceGroup:
+        description: 'Resource Group Name'
+        required: true
+      cluster:
+        description: 'Cluster Name'
+        required: true
+      acr:
+        description: 'ACR Name'
+        required: true
+      location:
+        description: 'Azure region (default: Israel Central)'
+        required: true
+        default: 'eastus'
+        type: choice
+        options:
+          - 'eastus'
+          - 'Israel Central'
+      enableMonitoring:
+        description: 'Enable monitoring with Log Analytics (true/false)'
+        required: true
+        type: choice
+        default: true
+        options:
+          - true
+          - false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Log in to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: 'Set environment variables'
+      run: |
+        echo "RG=${{ github.event.inputs.resourceGroup }}" >> $GITHUB_ENV
+        echo "LOCATION=${{ github.event.inputs.location }}" >> $GITHUB_ENV
+        echo "CLUSTER_NAME=${{ github.event.inputs.cluster }}" >> $GITHUB_ENV
+        echo "ACR_NAME=${{ github.event.inputs.acr }}" >> $GITHUB_ENV
+        echo "ENABLE_MONITORING=${{ github.event.inputs.enableMonitoring }}" >> $GITHUB_ENV
+
+    - name: 'Create Resource Group'
+      run: |
+        az group create --name $RG --location "$LOCATION"
+
+    - name: 'Create ACR'
+      run: |
+        az acr create --name $ACR_NAME --resource-group $RG --sku Basic --location "$LOCATION"
+
+    - name: 'Create AKS Cluster'
+      run: |
+        if [ "$ENABLE_MONITORING" = "true" ]; then
+          MONITORING_FLAG="--enable-addons monitoring"
+        else
+          MONITORING_FLAG=""
+        fi
+
+        az aks create \
+          --name $CLUSTER_NAME \
+          --resource-group $RG \
+          --node-count 1 \
+          --network-plugin azure \
+          --attach-acr $ACR_NAME \
+          $MONITORING_FLAG \
+          --generate-ssh-keys \
+          --location "$LOCATION" \
+          --node-vm-size Standard_B2s
+
+    - name: 'Get AKS credentials'
+      run: |
+        az aks get-credentials --resource-group $RG --name $CLUSTER_NAME
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: v3.13.3
+
+    - name: 'Install NGINX Ingress Controller'
+      run: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        helm repo update
+        helm install ingress-nginx ingress-nginx/ingress-nginx \
+          --create-namespace \
+          --namespace ingress-basic
