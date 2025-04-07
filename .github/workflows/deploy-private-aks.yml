@@ -273,3 +273,53 @@ jobs:
           --subnet $SUBNET_NAME \
           --public-ip-address aks-jumpbox-ip \
           --output json > jumpbox.json
+
+    - name: SSH and configure jumpbox
+      run: |
+        ssh -i ~/.ssh/id_rsa azureuser@$JUMPBOX_PUBLIC_IP -o StrictHostKeyChecking=no <<'EOF'
+          set -e
+
+          export AZURE_CLIENT_ID="${{ env.CLIENT_ID }}"
+          export AZURE_CLIENT_SECRET="${{ env.CLIENT_SECRET }}"
+          export AZURE_TENANT_ID="${{ env.TENANT_ID }}"
+          export RG="${{ env.RG }}"
+          export CLUSTER_NAME="${{ env.CLUSTER_NAME }}"
+
+          # Install tools
+          sudo apt update && sudo apt install -y curl apt-transport-https ca-certificates gnupg unzip lsb-release
+          curl -fsSL https://get.docker.com | sudo bash
+          sudo usermod -aG docker azureuser
+
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+          curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null
+          echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ \$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
+          sudo apt update && sudo apt install -y azure-cli
+
+          KUBECTL_VERSION=\$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+          curl -LO "https://dl.k8s.io/release/\${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+          # Azure CLI login
+          az login --service-principal \
+            --username "$AZURE_CLIENT_ID" \
+            --password "$AZURE_CLIENT_SECRET" \
+            --tenant "$AZURE_TENANT_ID"
+
+          # Connect to AKS
+          az aks get-credentials \
+            --resource-group "$RG" \
+            --name "$CLUSTER_NAME" \
+            --overwrite-existing
+
+          # Install internal NGINX ingress controller
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+          helm upgrade --install internal-ingress bitnami/nginx-ingress-controller \
+            --namespace ingress-nginx \
+            --create-namespace \
+            --set service.type=LoadBalancer \
+            --set-string service.annotations."service.beta.kubernetes.io/azure-load-balancer-internal"="true" \
+            --set rbac.create=true \
+            --set controller.publishService.enabled=true
+        EOF
