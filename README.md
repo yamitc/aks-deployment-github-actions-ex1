@@ -42,19 +42,7 @@ Before implementing the pipeline, I completed the following setup steps to ensur
 
 To begin, I signed up for a **free Azure account** at [https://azure.microsoft.com/free](https://azure.microsoft.com/free), which provided the base environment for deploying cloud resources. I then proceeded with the initial setup using the Azure Cloud Shell, which offers a convenient CLI interface pre-configured with all the necessary tools for Azure management.
 
-#### 2. Created a Resource Group
-
-I created a **resource group** named `aks-private-rg` using the Azure CLI. A resource group in Azure serves as a logical container that holds related resources for a solution. It provides an easy way to manage and monitor resources collectively.
-
-I created the resource group as a foundation for the AKS cluster and other components like the virtual network and container registry:
-
-```bash
-az group create --name aks-private-rg --location 'Israel Central'
-```
-
-This ensures that all infrastructure components deployed by the pipeline are grouped under a single manageable entity, which simplifies access control, billing, and cleanup.
-
-#### 3. Created a Service Principal
+#### 2. Created a Service Principal
 
 A **Service Principal** is a security identity used by applications, services, and automation tools to access Azure resources. It allows the pipeline to authenticate and perform actions on my behalf.
 
