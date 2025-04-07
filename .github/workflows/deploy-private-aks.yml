@@ -1,4 +1,4 @@
-name: Deploy private AKS with ACR and Ingress
+name: Create private AKS with ACR and Ingress
 
 on:
   workflow_dispatch:
@@ -79,8 +79,16 @@ jobs:
         echo "CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)" >> $GITHUB_ENV
         echo "TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)" >> $GITHUB_ENV
 
-    - name: Create Resource Group
-      run: az group create --name $RG --location "$LOCATION"
+    - name: Create Resource Group if it doesn't exist
+      run: |
+        echo "Checking for existing resource group: ${{ env.RG }}"
+        EXISTS=$(az group exists --name "${{ env.RG }}")
+        if [ "$EXISTS" = false ]; then
+          echo "Creating resource group: ${{ env.RG }}"
+          az group create --name "${{ env.RG }}" --location "${{ env.LOCATION }}"
+        else
+          echo "Resource group ${{ env.RG }} already exists. Skipping creation."
+        fi
 
     - name: Create Virtual Network and Subnet
       run: |
@@ -148,51 +156,64 @@ jobs:
         echo "JUMPBOX_PUBLIC_IP=$JUMPBOX_IP" >> $GITHUB_ENV
 
     - name: SSH and configure jumpbox
+      env:
+        JUMPBOX_PUBLIC_IP: ${{ env.JUMPBOX_PUBLIC_IP }}
+        CLIENT_ID: ${{ env.CLIENT_ID }}
+        CLIENT_SECRET: ${{ env.CLIENT_SECRET }}
+        TENANT_ID: ${{ env.TENANT_ID }}
+        RG: ${{ env.RG }}
+        CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
       run: |
-        ssh -i ~/.ssh/id_rsa azureuser@$JUMPBOX_PUBLIC_IP -o StrictHostKeyChecking=no <<'EOF'
+        ssh -i ~/.ssh/id_rsa azureuser@$JUMPBOX_PUBLIC_IP -o StrictHostKeyChecking=no <<EOF
           set -e
 
-          export AZURE_CLIENT_ID="${{ env.CLIENT_ID }}"
-          export AZURE_CLIENT_SECRET="${{ env.CLIENT_SECRET }}"
-          export AZURE_TENANT_ID="${{ env.TENANT_ID }}"
-          export RG="${{ env.RG }}"
-          export CLUSTER_NAME="${{ env.CLUSTER_NAME }}"
+          # Export Azure service principal credentials and AKS cluster info
+          export AZURE_CLIENT_ID="$CLIENT_ID"
+          export AZURE_CLIENT_SECRET="$CLIENT_SECRET"
+          export AZURE_TENANT_ID="$TENANT_ID"
+          export RG="$RG"
+          export CLUSTER_NAME="$CLUSTER_NAME"
 
-          # Install tools
+          # Install basic packages and utilities
           sudo apt update && sudo apt install -y curl apt-transport-https ca-certificates gnupg unzip lsb-release
+
+          # Install Docker engine
           curl -fsSL https://get.docker.com | sudo bash
+
+          # Add current user to docker group to allow running Docker without sudo
           sudo usermod -aG docker azureuser
 
+          # Install Helm (Kubernetes package manager)
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-          curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null
-          echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ \$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
-          sudo apt update && sudo apt install -y azure-cli
+          # Install Azure CLI (official Microsoft script, suitable for Ubuntu 22.04+)
+          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
+          # Install kubectl (Kubernetes CLI)
           KUBECTL_VERSION=\$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)
           curl -LO "https://dl.k8s.io/release/\${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           chmod +x kubectl && sudo mv kubectl /usr/local/bin/
 
-          # Azure CLI login
+          # Login to Azure using service principal credentials
           az login --service-principal \
-            --username "$AZURE_CLIENT_ID" \
-            --password "$AZURE_CLIENT_SECRET" \
-            --tenant "$AZURE_TENANT_ID"
+            --username "\$AZURE_CLIENT_ID" \
+            --password "\$AZURE_CLIENT_SECRET" \
+            --tenant "\$AZURE_TENANT_ID"
 
-          # Connect to AKS
+          # Connect kubectl to the private AKS cluster
           az aks get-credentials \
-            --resource-group "$RG" \
-            --name "$CLUSTER_NAME" \
+            --resource-group "\$RG" \
+            --name "\$CLUSTER_NAME" \
             --overwrite-existing
 
-          # Install internal NGINX ingress controller
+          # Install NGINX ingress controller with internal load balancer
           helm repo add bitnami https://charts.bitnami.com/bitnami
           helm repo update
           helm upgrade --install internal-ingress bitnami/nginx-ingress-controller \
             --namespace ingress-nginx \
             --create-namespace \
             --set service.type=LoadBalancer \
-            --set-string service.annotations."service.beta.kubernetes.io/azure-load-balancer-internal"="true" \
+            --set-string service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-internal"="true" \
             --set rbac.create=true \
             --set controller.publishService.enabled=true
         EOF
