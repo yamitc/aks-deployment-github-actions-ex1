@@ -32,6 +32,16 @@ Securely connects to the jumpbox using your private key.
 az acr credential show --name nextjsbasicappprivate
 ```
 
+Sure! Here's the minimal cheat sheet entry:
+
+---
+
+## 5. Connect to AKS Cluster
+
+```bash
+az aks get-credentials --resource-group aks-private-rg --name myaksprivatecluster --overwrite-existing
+```
+
 ---
 
 # Azure Cloud Shell Cheat Sheet – Public AKS
