@@ -1,0 +1,9 @@
+controller:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+  publishService:
+    enabled: true
+rbac:
+  create: true

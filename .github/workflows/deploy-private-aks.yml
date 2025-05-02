@@ -212,8 +212,8 @@ jobs:
           helm upgrade --install internal-ingress bitnami/nginx-ingress-controller \
             --namespace ingress-nginx \
             --create-namespace \
-            --set service.type=LoadBalancer \
-            --set-string service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-internal"="true" \
+            --set controller.service.type=LoadBalancer \
+            --set-string controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-internal"="true" \
             --set rbac.create=true \
             --set controller.publishService.enabled=true
         EOF
